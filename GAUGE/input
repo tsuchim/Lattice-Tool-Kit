@@ -1,0 +1,4 @@
+2.10                   beta
+1                      istart (1:Cold, 2:Hot, 3:File)
+       010     100     nsweep0, nsweep1 
+1.0                    gamma_G

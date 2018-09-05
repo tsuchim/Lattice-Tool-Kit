@@ -1,0 +1,10 @@
+1.90d0     1.90d0         beta, betamd
+0.141139d0  1.d0         hop,  r (Hopping parametger, Wilson term)
+.true.                   Clover term
+(0.0d0,0.0d0)            cmu (Chemical potential)
+1                        istart (1:Cold, 2:Hot, 3:File)
+001       004            ntraj0, ntraj1 
+1.d0                     gamma_G
+10     0.02d0            nstep, dtau
+.true.                   fermions
+0                        flagMD

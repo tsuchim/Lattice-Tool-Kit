@@ -1,0 +1,7 @@
+0.136931d0  1.d0       hop,  r (Hopping parametger, Wilson term)
+.true.                 Clover
+1.70d0                 beta
+(0.0d0,0.0d0)          cmu (Chemical potential)
+3                      istart (1:Cold, 2:Hot, 3:File)
+ 20000                 imax (Stopping condtion for CG)
+1.0d-20                eps  (Stopping condtion for CG)

@@ -1,0 +1,20 @@
+      INTEGER NX,  NY,  NZ,  NT,  NV
+      INTEGER NXH, NYH, NZH, NTH, NVH
+      INTEGER NBUSH, NDW
+
+      parameter( NX=4, NY=4, NZ=4, NT=4 )
+      parameter( NV=NX*NY*NZ*NT, NVH=NV/2 )
+      parameter( NXH=NX/2, NYH=NY/2, NZH=NZ/2, NTH=NT/2 )
+      parameter( NBUSH=1 )       
+      parameter( NDW=1 )        
+
+! NX, NY, NZ, NT     : Lattice size
+! NBUSH              : No. of Bush = Even/Odd of Hypercube * No. of links 
+!                      on a Hyper-cube
+! NDW                : Width of the fringes.  1 or 2
+! NXH, NYX, NZH, NTH : Size of Hyper cube coordinates
+
+!  Quench update with Wilson gauge action     NBUSH=2, NDW=1
+!                with 1x1 + 1x2 gauge action  NBUSH=32, NDW=2
+!  Hybrid MC     with Wilson gauge action     NBUSH=1, NDW=1
+!                with 1x1 + 1x2 gauge action  NBUSH=1, NDW=2

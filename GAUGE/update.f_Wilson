@@ -1,0 +1,751 @@
+c update.f
+c----------------------------------------------------------------------c
+      subroutine  update1(u,beta)
+c----------------------------------------------------------------------c
+c     Update gauge fields.  Metropolis algorithm                       c
+c----------------------------------------------------------------------c
+      USE field_g
+      include '../INCLUDE/para_geometry'
+
+      TYPE(g_field0) u(4)
+      TYPE(g_field1)  staple, temp1, temp2, temp3
+
+      REAL*8 beta
+      REAL*8 tr_new(NV/NBUSH), tr_old(NV/NBUSH), 
+     &       xr(NV/NBUSH), ex(NV/NBUSH)
+      REAL*8 rdiag, rwidth
+
+      integer iaccpt(NV/NBUSH)
+      
+      data nhit/6/, rwidth/0.4d0/
+
+      rdiag = sqrt(beta)
+
+      EvenOdd: do ibush = 0, NBUSH-1
+
+
+         Direction: do mu = 1, 4
+*        WRITE(*,*) "mu, ibush : ", mu, ibush
+
+            call make_staple(u,staple,mu)   ! Staple for Wilson action
+*           call make_istaple(u,staple,mu)  ! Staple for Improved action
+
+            temp1 = u(mu)         !  temp1 : old field
+            call tracev (temp1,staple,tr_old,0)
+ 
+            Hit: do ihit = 1, nhit
+ 
+               call set_rand2(temp2,rdiag,rwidth)
+               temp3 = temp1 * temp2  ! temp3 : new field
+               
+               call tracev (temp3,staple,tr_new,0)
+ 
+               do i = 1, NV/NBUSH 
+               xr(i) = ranf(idum)
+               enddo
+
+               do i = 1,  NV/NBUSH
+               ex(i) = exp( beta * (tr_new(i)-tr_old(i))/3.0)
+               enddo
+ 
+               do i = 1, NV/NBUSH 
+
+               if( xr(i) <= ex(i) )  then
+                  iaccpt(i) = 1    ! accept
+               else
+                  iaccpt(i) = 0    ! reject
+                endif              
+
+               enddo 
+ 
+               naccept = 0
+               call  accptmet
+     &               (temp1,temp3,tr_old,tr_new,iaccpt,naccept)
+ 
+            enddo Hit
+ 
+            u(mu) = temp1
+            u(mu)%direction = mu
+            u(mu)%parity = ibush
+*           call set_wing_g2(u(mu))
+            call set_wing_g_eo1(u(mu),ibush)
+ 
+         enddo Direction
+
+      enddo EvenOdd
+ 
+      return
+      end
+
+c----------------------------------------------------------------------c
+      subroutine accptmet (uold,utry,eold,etry,iaccpt,naccept)
+c----------------------------------------------------------------------c
+c     Metropolic accept/reject procedure.                              c
+c----------------------------------------------------------------------c
+      USE field_g
+      include '../INCLUDE/para_geometry'
+
+      TYPE(g_field1) uold, utry
+      REAL*8 eold(NV/NBUSH), etry(NV/NBUSH)
+      integer  iaccpt(NV/NBUSH)
+ 
+      SITE: do is = 1, NV/NBUSH
+
+         if(iaccpt(is)==1)  then
+
+           uold%g(1,1,is) = utry%g(1,1,is)
+           uold%g(1,2,is) = utry%g(1,2,is)
+           uold%g(1,3,is) = utry%g(1,3,is)
+           uold%g(2,1,is) = utry%g(2,1,is)
+           uold%g(2,2,is) = utry%g(2,2,is)
+           uold%g(2,3,is) = utry%g(2,3,is)
+           uold%g(3,1,is) = utry%g(3,1,is)
+           uold%g(3,2,is) = utry%g(3,2,is)
+           uold%g(3,3,is) = utry%g(3,3,is)
+
+           eold(is) = etry(is)
+
+           naccept = naccept + 1
+
+         endif
+
+      enddo SITE
+ 
+      return
+      end
+     
+c----------------------------------------------------------------------c 
+      subroutine  make_staple(u,staple,mu)
+c----------------------------------------------------------------------c
+c     Make staple
+c----------------------------------------------------------------------c
+      USE field_g
+      USE aniso
+      include '../INCLUDE/para_geometry'
+
+      TYPE(g_field0) u(4)
+      
+      TYPE(g_field1)  staple, temp1, temp2, temp3
+      TYPE(ivec2)    idir2
+            
+      real*8 fac
+
+      call set_zero(staple)
+      
+      do nu = 1, 4
+      if(nu==mu)  cycle
+      if( (mu==4) .or. (nu==4) )  then
+         fac = gamma_G        ! Temporal 
+      else
+         fac = 1.d0/gamma_G   ! Spatial
+      endif
+      
+c       x+nu temp2
+c        .---------.
+c        I         I
+c  temp1 I         I
+c        I         I
+c        .         .
+c        x        x+mu
+
+         temp1 = u(nu)
+         temp2 = nu.gshift.u(mu)
+         temp3 = temp1 * temp2
+         temp1 = mu.gshift.u(nu)
+         staple = staple + (fac*(temp3.prodAD.temp1))
+
+c        x
+c        .         .
+c        I         I
+c  temp1 I         I
+c        I         I
+c        .---------.
+c      x-nu        x+mu-nu
+      
+         idir2 = ivec2(mu,-nu)
+         temp1 = (-nu).gshift.u(nu)
+         temp2 = (-nu).gshift.u(mu)
+         temp3 = temp1.ADprod.temp2
+         temp1 = idir2.gshift.u(nu)
+         staple = staple + (fac*(temp3*temp1))
+
+      end do
+      
+      return
+      end
+      
+c--------------------------------------------------------------------c
+      subroutine  make_istaple(u,staple,mu)
+c--------------------------------------------------------------------c
+c
+c     Make staples for improved action
+c          (here 1x1 + 1x2) 
+c     c0 : coefficient of 1x1
+c     c1 : coefficient of 1x2
+c      PARAMETER ( c0=6.1564, c1=(-0.6241) )
+c
+c     But I do not know how to normalize. 
+c                                    by S. Muroya 5 June 2000
+c
+c------------------------------------------------------------------c
+c
+c    +------+                +------+------+  
+c    |      |                |             |  
+c    |      |                |             |  
+c    +      +    +      +    +      +------+   +       ------+  
+c                |      |                      |             |  
+c                |      |                      |             |  
+c                +------+                      +------+------+  
+c
+c     type 1      type 2         type 3           type 4
+c
+c                                          +------+ 
+c                                          |      | 
+c                                          |      | 
+c    +------+------+                       +      + 
+c    |             |                       |      | 
+c    |             |                       |      | 
+c    +------+      +   +------+      +     +      +     +      +
+c                      |             |                  |      | 
+c                      |             |                  |      | 
+c                      +------+------+                  +      + 
+c                                                       |      |
+c        type 5             type 6                      |      |
+c                                                       +------+
+c                                            type 7      type 8
+c
+c   This classification is due to Prof.Sakai
+c-----------------------------------------------------------------c
+      USE field_g
+      TYPE(g_field0) u(4)
+      TYPE(g_field1)  staple, temp1, temp2, temp3
+      TYPE(ivec2)    idir2
+      type(ivec3)    idir3
+c
+      REAL*8  c0, c1
+*     PARAMETER ( c0=1.0, c1=0.0 )
+      PARAMETER ( c0=3.648, c1=(-0.331) )
+c
+      call set_zero(staple)
+c
+c
+c-------------------------------------------------------------------c
+c     ordinary Wilson part
+c-------------------------------------------------------------------c
+c
+
+      do nu = 1, 4
+      if(nu==mu)  cycle
+      
+      
+c       x+nu temp2
+c        .---------.
+c        I         I
+c  temp1 I         I
+c        I         I
+c        .         .
+c        x        x+mu
+
+         temp1 = u(nu)
+         temp2 = nu.gshift.u(mu)
+         temp3 = temp1 * temp2
+         temp1 = mu.gshift.u(nu)
+         temp3 = temp3.prodAD.temp1
+
+         staple = staple + (c0*temp3)
+
+c        x
+c        .         .
+c        I         I
+c  temp1 I         I
+c        I         I
+c        .---------.
+c      x-nu        x+mu-nu
+      
+         idir2 = ivec2(mu,-nu)
+         temp1 = (-nu).gshift.u(nu)
+         temp2 = (-nu).gshift.u(mu)
+         temp3 = temp1.ADprod.temp2
+         temp1 = idir2.gshift.u(nu)
+         temp3 = temp3*temp1
+
+         staple = staple + (c0*temp3)
+c
+c      end do ! switch off improvement here
+c
+c-------------------------------------------------------------------c
+c
+c     additional term for improved action
+c
+c-------------------------------------------------------------------c
+c      x+nu
+c       +------+------+ 
+c       |             | 
+c       |             | 
+c       +      +------+    clockwise manner 
+c       x     x+mu
+c    type 3      
+
+         temp1 = u(nu)
+         temp2 = nu.gshift.u(mu)
+         temp3 = temp1 * temp2
+
+         idir2 = ivec2(mu,nu)
+         temp1 = idir2.gshift.u(mu)
+         temp3 = temp3*temp1
+
+         idir2 = ivec2(mu,mu)
+         temp1 = idir2.gshift.u(nu)
+         temp3 = temp3.prodAD.temp1
+
+         temp1 = mu.gshift.u(mu)
+         temp3 = temp3.prodAD.temp1
+
+         staple = staple + (c1*temp3)
+
+c-------------------------------------------------------------------c
+c       x      x+mu
+c       +      +------+  
+c       |             |  
+c temp1 |temp2        |  
+c       +------+------+   counter clockwise 
+c      x+(-nu)
+c    type 4
+
+         temp1 = (-nu).gshift.u(nu)
+         temp2 = (-nu).gshift.u(mu)
+         temp3 = temp1.ADprod.temp2
+
+*        idir2 = ivec2(mu,nu)
+         idir2 = ivec2(mu,-nu)      ! corrected on Sept.3,2000
+         temp1 = idir2.gshift.u(mu)
+         temp3 = temp3*temp1
+
+         idir3 = ivec3(mu,mu,-nu)
+         temp1 = idir3.gshift.u(nu)
+         temp3 = temp3*temp1
+
+         temp1 = mu.gshift.u(mu)
+         temp3 = temp3.prodAD.temp1
+
+         staple = staple + (c1*temp3)
+
+c-------------------------------------------------------------------c
+c
+c    x-mu+nu        x+mu-nu                  The node x-mu-nu must be 
+c       +------+------+                      replaced by x-mu+nu. The
+c       |             |                      replacement was done by
+c  temp2|temp1        |                      P.I. on 3 of November.
+c       +------+      +     clockwise        
+c      x-mu     x     x+mu
+c    type 5     
+
+         temp1 = (-mu).gshift.u(mu)
+         temp2 = (-mu).gshift.u(nu)
+         temp3 = temp1.ADprod.temp2
+
+         idir2 = ivec2(-mu,nu)
+         temp1 = idir2.gshift.u(mu)
+         temp3 = temp3*temp1
+
+         temp1 = nu.gshift.u(mu)
+         temp3 = temp3*temp1
+
+         temp1 = mu.gshift.u(nu)
+         temp3 = temp3.prodAD.temp1
+
+         staple = staple + (c1*temp3)
+
+c-------------------------------------------------------------------c
+c   x-mu temp2 x     x+mu
+c       +------+      + 
+c  temp1|             | 
+c       |             | 
+c       +------+------+     counter clockwise
+c          
+c     x-mu-nu       x+mu-nu
+c   type 6     
+c
+         idir2 = ivec2(-mu,-nu)
+         temp1 = idir2.gshift.u(nu)
+         temp2 = (-mu).gshift.u(mu)
+         temp3 = temp1*temp2
+
+         idir2 = ivec2(-mu,-nu)
+         temp1 = idir2.gshift.u(mu)
+         temp3 = temp3.ADprod.temp1
+
+         temp1 = (-nu).gshift.u(mu)
+         temp3 = temp3*temp1
+
+         idir2 = ivec2(mu,-nu)
+         temp1 = idir2.gshift.u(nu)
+         temp3 = temp3*temp1
+
+         staple = staple + (c1*temp3)
+
+c-------------------------------------------------------------------c
+c     x+2nu   x+nu+nu+mu         
+c       +------+ 
+c temp2 |      | 
+c       |      | 
+c   x+nu+      + x+mu+nu
+c       |      | 
+c temp1 |      | 
+c       +      + 
+c       x      x+mu       clockwise
+c
+c  type 7  
+c
+         temp1 = u(nu)
+         temp2 = nu.gshift.u(nu)
+         temp3 = temp1 * temp2
+
+         idir2 = ivec2(nu,nu)
+         temp1 = idir2.gshift.u(mu)
+         temp3 = temp3*temp1
+
+         idir2 = ivec2(nu,mu)
+         temp1 = idir2.gshift.u(nu)
+         temp3 = temp3.prodAD.temp1
+
+         temp1 = mu.gshift.u(nu)
+         temp3 = temp3.prodAD.temp1
+
+         staple = staple + (c1*temp3)
+
+c-------------------------------------------------------------------c
+c       x     x+mu
+c       +      +
+c       |      |
+c temp2 |      |
+c  x-nu +      + x-nu+mu
+c       |      |
+c temp1 |      |
+c       +------+          counter clockwise
+c   x-nu-nu   x-nu-nu+mu
+c
+c   type 8
+
+         idir2 = ivec2(-nu,-nu)
+         temp1 = idir2.gshift.u(nu)
+         temp2 = (-nu).gshift.u(nu)
+         temp3 = temp1*temp2
+
+         idir2 = ivec2(-nu,-nu)
+         temp1 = idir2.gshift.u(mu)
+         temp3 = temp3.ADprod.temp1      
+
+         idir3 = ivec3(+mu,-nu,-nu)
+         temp1 = idir3.gshift.u(nu)
+         temp3 = temp3*temp1
+
+         idir2 = ivec2(+mu,-nu)
+         temp1 = idir2.gshift.u(nu)
+         temp3 = temp3*temp1
+
+         staple = staple + (c1*temp3)
+
+      end do
+
+      return
+      end
+c------------------------------------------------------c
+      subroutine  update3(u,beta)
+c------------------------------------------------------c
+*     pseudo-heat-bath for su3
+*     N.Cabbibo and E.Marinari Phys.Lett.119B(1982)387.
+*     Kendy-Pendelton
+*     This program was originally written by S.Hioki
+c------------------------------------------------------c
+      USE field_g
+      include '../INCLUDE/para_geometry'
+
+      TYPE(g_field0) u(4)
+      TYPE(g_field1) staple, temp1, temp2, temp3
+
+      REAL*8 PI, TWOPI
+      parameter( PI=3.141592653589793, TWOPI=2.*PI )
+
+      REAL*8 v(4,NV/NBUSH),rn(NV/NBUSH),a0(NV/NBUSH),a3(NV/NBUSH),
+     &       dk(NV/NBUSH),bk(NV/NBUSH),be(NV/NBUSH),
+     &       w(4,NV/NBUSH),rad2(NV/NBUSH),
+     &       xrn(3,NV/NBUSH),d2(NV/NBUSH)
+      REAL*8 beta
+      integer id(NV/NBUSH)
+      REAL*8 x1, x2, eps
+
+      data nhit/6/
+
+      eps = 0.000000000001d0  ! a tiny number for log
+
+      EvenOdd: do ibush = 0, NBUSH-1
+
+         Direction: do mu = 1, 4
+
+            call make_staple(u,staple,mu)
+*           call make_istaple(u,staple,mu)
+
+            temp1 = u(mu)
+            temp2 = temp1.prodAD.staple  
+
+         Sub_k: do k=1,3
+ 
+            call  submat(temp2,v,NV/NBUSH,k,id)
+ 
+            do i=1,NV/NBUSH
+               dk(i)=sqrt(v(1,i)**2+v(2,i)**2+v(3,i)**2+v(4,i)**2)
+               bk(i)=2.d0 * beta* dk(i) / 3.d0
+               be(i)=1.d0 - exp(-bk(i))
+               dk(i)=1.d0 / dk(i)
+               id(i)=0
+            enddo
+
+c=============================================
+c     Kennedy-Pendelton
+c=============================================
+            Hit: do ihit=1, nhit
+ 
+               call rndprd2(xrn,NV/NBUSH)
+
+               do i=1,NV/NBUSH
+                  if(id(i).eq.1) cycle
+
+                  x1 = xrn(1,i)+eps
+                  x2 = xrn(2,i)+eps
+      IF((x1.le.0.d0).or.(x2.le.0.d0)) THEN
+          write(*,*) "x1, x2 : ", x1, x2
+          write(*,*) "xrn(1,i),xrn(2,i): ", xrn(1,i),xrn(2,i)
+      ENDIF
+
+                  d2(i)=-( log(x1)+
+     &                  log(x2)*cos(2.d0*pi*xrn(3,i))**2)/bk(i)
+               enddo
+ 
+               call rndprd(rn,NV/NBUSH)
+
+               do i=1,NV/NBUSH
+                  if(id(i).eq.1) cycle
+                  if( rn(i)**2 .gt.(1.d0-0.5d0*d2(i))) cycle
+                  id(i)=1
+                  a0(i)=1.d0 - d2(i)
+               enddo
+
+            enddo  Hit
+ 
+
+            call rndprd(rn,NV/NBUSH)
+
+            do i=1,NV/NBUSH
+               if(id(i).eq.0) cycle
+               rad=1.-a0(i)**2
+               a3(i)=sqrt(rad)*(2.d0*rn(i)-1.d0)
+               rad2(i)=sqrt(abs(rad-a3(i)**2))
+            enddo
+ 
+            call rndprd(rn,NV/NBUSH)
+
+            do i=1,NV/NBUSH
+               if(id(i).eq.0) cycle
+               theta=twopi*rn(i)
+               a1=rad2(i)*cos(theta)
+               a2=rad2(i)*sin(theta)
+         w(1,i)=dk(i)*( a0(i)*v(1,i)+a1*v(2,i)+a2*v(3,i)+a3(i)*v(4,i))
+         w(2,i)=dk(i)*(-a0(i)*v(2,i)+a1*v(1,i)+a2*v(4,i)-a3(i)*v(3,i))
+         w(3,i)=dk(i)*(-a0(i)*v(3,i)-a1*v(4,i)+a2*v(1,i)+a3(i)*v(2,i))
+         w(4,i)=dk(i)*(-a0(i)*v(4,i)+a1*v(3,i)-a2*v(2,i)+a3(i)*v(1,i))
+            enddo
+ 
+            call submat(temp3,w,NV/NBUSH,k+3,id)
+
+            if(k.le.2) then
+               temp2 = temp3 * temp1
+               temp1 = temp2
+               temp2 = temp1.prodAD.staple
+            elseif(k.eq.3) then
+               temp2 = temp3 * temp1
+               u(mu) = temp2
+               u(mu)%direction = mu
+               u(mu)%parity = ibush
+            endif
+
+         enddo Sub_k
+
+         call set_wing_g2(u(mu))
+
+         enddo Direction
+
+      enddo EvenOdd
+
+      return
+      end
+ 
+c-------------------------------------------------c
+      subroutine  submat(x,c,n,k,id)
+c-------------------------------------------------c
+*     su2-submatrix(c) in su3 matrix(x)
+*            su2            su3
+*     k=1         <-    1-2 elements
+*     k=2         <-    2-3 elements
+*     k=3         <-    1-3 elements
+*     k=4          ->   1-2 elements
+*     k=5          ->   2-3 elements
+*     k=6          ->   1-3 elements
+c-------------------------------------------------c
+      USE field_g
+      TYPE(g_field1) x
+
+      REAL*8 c(4,n)
+      integer id(n)
+
+      if(k.eq.1) then
+ 
+        do 100 i=1,n
+          c(1,i)=REAL (x%g(1,1,i)+x%g(2,2,i))*.5d0
+          c(2,i)=AIMAG(x%g(1,2,i)+x%g(2,1,i))*.5d0
+          c(3,i)=REAL (x%g(1,2,i)-x%g(2,1,i))*.5d0
+          c(4,i)=AIMAG(x%g(1,1,i)-x%g(2,2,i))*.5d0
+  100   continue
+ 
+      else if(k.eq.2) then
+ 
+        do 200 i=1,n
+          c(1,i)=REAL (x%g(2,2,i)+x%g(3,3,i))*.5d0
+          c(2,i)=AIMAG(x%g(3,2,i)+x%g(2,3,i))*.5d0
+          c(3,i)=REAL (x%g(3,2,i)-x%g(2,3,i))*.5d0
+          c(4,i)=AIMAG(x%g(2,2,i)-x%g(3,3,i))*.5d0
+  200   continue
+ 
+      else if(k.eq.3) then
+ 
+        do 300 i=1,n
+          c(1,i)=REAL (x%g(1,1,i)+x%g(3,3,i))*.5d0
+          c(2,i)=AIMAG(x%g(3,1,i)+x%g(1,3,i))*.5d0
+          c(3,i)=REAL (x%g(1,3,i)-x%g(3,1,i))*.5d0
+          c(4,i)=AIMAG(x%g(1,1,i)-x%g(3,3,i))*.5d0
+  300   continue
+ 
+      else if(k.eq.4) then
+ 
+        do 400 i=1,n
+        if(id(i).eq.1) then
+
+          x%g(1,1,i) = dcmplx( c(1,i), c(4,i))
+          x%g(1,2,i) = dcmplx( c(3,i), c(2,i))
+          x%g(1,3,i) =      ( 0.d0  , 0.d0  )
+          x%g(2,1,i) = dcmplx(-c(3,i), c(2,i))
+          x%g(2,2,i) = dcmplx( c(1,i),-c(4,i))
+          x%g(2,3,i) =      ( 0.d0  , 0.d0  )
+          x%g(3,1,i) =      ( 0.d0  , 0.d0  )
+          x%g(3,2,i) =      ( 0.d0  , 0.d0  )
+          x%g(3,3,i) =      ( 1.d0  , 0.d0  )
+
+        else if(id(i).eq.0) then
+
+          x%g(1,1,i) = ( 1.d0   , 0.d0   )  
+          x%g(1,2,i) = ( 0.d0   , 0.d0   )
+          x%g(1,3,i) = ( 0.d0   , 0.d0   )
+          x%g(2,1,i) = ( 0.d0   , 0.d0   )
+          x%g(2,2,i) = ( 1.d0   , 0.d0   )
+          x%g(2,3,i) = ( 0.d0   , 0.d0   )
+          x%g(3,1,i) = ( 0.d0   , 0.d0   )
+          x%g(3,2,i) = ( 0.d0   , 0.d0   )
+          x%g(3,3,i) = ( 1.d0   , 0.d0   )
+
+        endif
+  400   continue
+ 
+      else if(k.eq.5) then
+ 
+        do 500 i=1,n
+          if(id(i).eq.1) then
+
+          x%g(1,1,i) =       ( 1.d0  , 0.d0  )  
+          x%g(1,2,i) =       ( 0.d0  , 0.d0  )
+          x%g(1,3,i) =       ( 0.d0  , 0.d0  )
+          x%g(2,1,i) =       ( 0.d0  , 0.d0  )
+          x%g(2,2,i) = dcmplx( c(1,i), c(4,i))
+          x%g(2,3,i) = dcmplx(-c(3,i), c(2,i))
+          x%g(3,1,i) =       ( 0.d0  , 0.d0  )
+          x%g(3,2,i) = dcmplx( c(3,i), c(2,i))
+          x%g(3,3,i) = dcmplx( c(1,i),-c(4,i))
+
+        else if(id(i).eq.0) then
+
+          x%g(1,1,i) = ( 1.d0  , 0.d0  )  
+          x%g(1,2,i) = ( 0.d0  , 0.d0  )
+          x%g(1,3,i) = ( 0.d0  , 0.d0  )
+          x%g(2,1,i) = ( 0.d0  , 0.d0  )
+          x%g(2,2,i) = ( 1.d0  , 0.d0  )
+          x%g(2,3,i) = ( 0.d0  , 0.d0  )
+          x%g(3,1,i) = ( 0.d0  , 0.d0  )
+          x%g(3,2,i) = ( 0.d0  , 0.d0  )
+          x%g(3,3,i) = ( 1.d0  , 0.d0  )
+
+        endif
+  500   continue
+ 
+      else if(k.eq.6) then
+ 
+        do 600 i=1,n
+          if(id(i).eq.1) then
+
+          x%g(1,1,i) = dcmplx( c(1,i), c(4,i))
+          x%g(1,2,i) =       ( 0.d0  , 0.d0  )
+          x%g(1,3,i) = dcmplx( c(3,i), c(2,i))
+          x%g(2,1,i) =       ( 0.d0  , 0.d0  )
+          x%g(2,2,i) =       ( 1.d0  , 0.d0  )
+          x%g(2,3,i) =       ( 0.d0  , 0.d0  )
+          x%g(3,1,i) = dcmplx(-c(3,i), c(2,i))
+          x%g(3,2,i) =       ( 0.d0  , 0.d0  )
+          x%g(3,3,i) = dcmplx( c(1,i),-c(4,i))
+
+        else if(id(i).eq.0) then
+
+          x%g(1,1,i) = ( 1.d0  , 0.d0  )  
+          x%g(1,2,i) = ( 0.d0  , 0.d0  )
+          x%g(1,3,i) = ( 0.d0  , 0.d0  )
+          x%g(2,1,i) = ( 0.d0  , 0.d0  )
+          x%g(2,2,i) = ( 1.d0  , 0.d0  )
+          x%g(2,3,i) = ( 0.d0  , 0.d0  )
+          x%g(3,1,i) = ( 0.d0  , 0.d0  )
+          x%g(3,2,i) = ( 0.d0  , 0.d0  )
+          x%g(3,3,i) = ( 1.d0  , 0.d0  )
+
+        endif
+  600   continue
+ 
+      endif
+ 
+      return
+      end
+ 
+
+c-------------------------------------------------c
+      subroutine rndprd(rn,n)
+c-------------------------------------------------c
+c     temporal random number generator
+c-------------------------------------------------c
+      real*8 rn(n)
+      real*4 ranf
+
+      do 10 i=1,n
+        rn(i)=ranf(idum)
+   10 continue
+      return
+      end
+ 
+c=================================================c
+      subroutine rndprd2(xrn,n)
+c-------------------------------------------------c
+      real*8 xrn(3,n)
+      real*4 ranf
+
+      do 11 j=1,n
+       do 11 i=1,3
+         xrn(i,j)=ranf(idum)
+c         write(*,*)'rndprd2----xrn(i,j)',i,xrn(i,j)
+11    continue
+      return
+      end
+ 
