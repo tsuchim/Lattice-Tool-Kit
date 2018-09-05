@@ -1,4 +1,4 @@
-LTK is a collection of fundamental/essential codes for lattice QCD simulations.
+LTK is a collection of fundamental/essential codes for lattice QCD simulations, which has been developped by Dr. Atsushi Nakamura.
 
 Numerical simulations are a tool for the research, and the lattice QCD is a tool for hadron physics; I wish many researchers employ the lattice QCD as a useful tool.
 
